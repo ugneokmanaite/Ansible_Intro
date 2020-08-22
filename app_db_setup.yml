@@ -1,0 +1,142 @@
+# This is a YAML file to install all app and db dependancies
+---
+
+- hosts: db
+
+  gather_facts: yes
+
+  become: true
+
+  tasks:
+
+# installing mongodb
+
+  - name: install mongodb
+    apt: pkg=mongodb state=present
+
+# removing existing mongodb conf file
+  - name: Remove mongodb.conf
+    file:
+      path: /etc/mongodb.conf
+
+# create a new mongodb.conf file & set permission
+  - name: Creating new mongodb file
+    file:
+      path: /etc/mongodb.conf
+      state: touch
+      mode: u=rw,g=r,o=r
+
+# writing inside mongodb file
+
+  - name: Writing inside mongodb.conf file
+    blockinfile:
+      path: /etc/mongodb.conf
+      block: |
+        # mongodb.conf
+        storage:
+          dbPath: /var/lib/mongodb
+          journal:
+            enabled: true
+        systemLog:
+          destination: file
+          logAppend: true
+          path: /var/log/mongodb/mongod.log
+        net:
+          port: 27017
+          bindIp: 0.0.0.0
+
+# restarting mongodb
+  - name: Restart mongodb
+    become: true
+    shell: systemctl restart mongodb
+
+  - name: enable mongodb
+    become: true
+    shell: systemctl enable mongodb
+
+  - name: start mongodb
+    become: true
+    shell: systemctl start mongodb
+
+# Now we switch to web to run the conf required
+- hosts: web
+
+  gather_facts: yes
+
+  become: true
+
+  tasks:
+
+# Intall nginx
+  - name: Install nginx
+    apt: pkg=nginx state=present
+    become_user: root
+
+# Remove the default nginx host file
+  - name: Remove nginx deafault file
+    file:
+      path: /etc/nginx/sites-enabled/default
+      state: absent
+
+# Create a new nginx file for reverse-proxy 
+  - name: Create reverse_proxy.conf file
+    file:
+      path: /etc/nginx/sites-enabled/reverseproxy.conf
+      state: touch
+      mode: '666'
+  - name: Insert multiple lines and Backup
+    blockinfile:
+      path: /etc/nginx/sites-enabled/reverseproxy.conf
+      block: |
+        server{
+          listen 80;
+          server_name development.local;
+          location / {
+              proxy_pass http://127.0.0.1:3000;
+          }
+        }
+
+# Create a symbolic link of the reverseproxy file
+  - name: Create a symbolic link
+    file:
+      src: /etc/nginx/sites-enabled/reverseproxy.conf
+      dest: /etc/nginx/sites-available/reverseproxy.conf
+      state: link
+
+  - name: nginx bug workaround
+    shell: |
+      sudo mkdir /etc/systemd/system/nginx.service.d
+        printf "[Service]\nExecStartPost=/bin/sleep 0.1\n" | \
+          sudo tee /etc/systemd/system/nginx.service.d/override.conf
+      sudo systemctl daemon-reload
+      sudo systemctl restart nginx
+
+# Install node
+
+  - name: Install nodejs
+    apt: pkg=nodejs state=present
+
+# Download latest npm
+#  - name: download latest npm
+#    shell: |
+
+#      npm install -g npm@latest
+#      npm install mongoose -y
+
+#  - name: Copy web app into web virtual machine
+#    synchronize:
+#      src: /home/vagrant/app
+#      dest: /home/vagrant
+
+# Running the app
+  - name: set up app
+    shell: |
+      cd app/
+      npm install
+      node seeds/seed.js
+      pm2 kill
+      pm2 start app.js
+    environment:
+      DB_HOST: mongodb://vagrant@192.168.33.11:27017/posts?authSource=admin
+    become_user: root
+
